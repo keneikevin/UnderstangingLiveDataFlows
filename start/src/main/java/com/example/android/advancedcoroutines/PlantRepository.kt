@@ -25,6 +25,8 @@ import com.example.android.advancedcoroutines.util.CacheOnSuccess
 import com.example.android.advancedcoroutines.utils.ComparablePair
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.withContext
 import java.nio.ByteOrder
 
@@ -43,29 +45,27 @@ class PlantRepository private constructor(
     private val defaultDispatcher: CoroutineDispatcher = Dispatchers.Default
 ) {
 
-    /**
-     * Fetch a list of [Plant]s from the database.
-     * Returns a LiveData-wrapped List of Plants.
-     */
-    val plants: LiveData<List<Plant>> = liveData<List<Plant>> {
-        val plantsLiveData = plantDao.getPlants()
-        val customSortOrder = plantsListSortOrderInMemoryCache.getOrAwait()
-        emitSource(plantsLiveData.map {
-            plantList -> plantList.applySort(customSortOrder)
-        })
-    }
+
+    private val customSortFlow: Flow<List<String>>
+        get() = plantsListSortOrderCache::getOrAwait.asFlow()
+
+
+    val plantsFlow: Flow<List<Plant>>
+        get() = plantDao.getPlantsFlow()
+                .combine(customSortFlow) { plants, sortOrder ->
+                    plants.applySort(sortOrder)
+                }
+                .flowOn(defaultDispatcher)
+                .conflate()
+
+
     /**
      * Fetch a list of [Plant]s from the database that matches a given [GrowZone].
      * Returns a LiveData-wrapped List of Plants.
      */
-    fun getPlantsWithGrowZone(growZone: GrowZone) =
-        plantDao.getPlantsWithGrowZoneNumber(growZone.number)
-            .switchMap { plantList ->
-                liveData {
-                    val customSortOrder = plantsListSortOrderInMemoryCache.getOrAwait()
-                    emit(plantList.applyMAinSafeSort(customSortOrder))
-                }
-            }
+    fun getPlantsWithGrowZoneFlow(growZone: GrowZone):Flow<List<Plant>> {
+        return plantDao.getPlantsWithGrowZoneNumberFlow(growZone.number)
+    }
 
 
     /**
@@ -123,19 +123,21 @@ class PlantRepository private constructor(
             }
     }
 
-    private var plantsListSortOrderInMemoryCache =
-        CacheOnSuccess(onErrorFallback = {listOf<String>() }){
-            plantService.customPlantSortOrder()
-        }
+    private var plantsListSortOrderCache =
+            CacheOnSuccess(onErrorFallback = { listOf<String>() }) {
+                plantService.customPlantSortOrder()
+            }
 
-    private fun List<Plant>.applySort(customSortOrder: List<String>): List<Plant>{
-        return sortedBy {plant ->
-                val positionForItem = customSortOrder.indexOf(plant.plantId).let { order->
-                    if (order > -1) order else Int.MAX_VALUE
-                }
+
+    private fun List<Plant>.applySort(customSortOrder: List<String>): List<Plant> {
+        return sortedBy { plant ->
+            val positionForItem = customSortOrder.indexOf(plant.plantId).let { order ->
+                if (order > -1) order else Int.MAX_VALUE
+            }
             ComparablePair(positionForItem, plant.name)
         }
     }
+
 
     @AnyThread
     suspend fun List<Plant>.applyMAinSafeSort(customSortOrder: List<String>) =
