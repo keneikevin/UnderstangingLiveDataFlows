@@ -18,8 +18,7 @@ package com.example.android.advancedcoroutines
 
 import androidx.lifecycle.*
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
 /**
@@ -78,7 +77,16 @@ class PlantListViewModel internal constructor(
         // When creating a new ViewModel, clear the grow zone and perform any related updates
         clearGrowZoneNumber()
         // fetch the full plant list
-        launchDataLoad { plantRepository.tryUpdateRecentPlantsCache() }
+       growZoneFlow.mapLatest { growZone ->
+           _spinner.value = true
+           if (growZone == NoGrowZone){
+               plantRepository.tryUpdateRecentPlantsCache()
+           }else{
+               plantRepository.tryUpdateRecentPlantsForGrowZoneCache(growZone)
+           }
+       }.onEach { _spinner.value = false }
+               .catch { throwable-> _snackbar.value = throwable.message }
+               .launchIn(viewModelScope)
     }
 
     /**
@@ -91,7 +99,7 @@ class PlantListViewModel internal constructor(
         growZoneFlow.value = GrowZone(num)
 
         // initial code version, will move during flow rewrite
-        launchDataLoad { plantRepository.tryUpdateRecentPlantsCache() }
+       // launchDataLoad { plantRepository.tryUpdateRecentPlantsCache() }
     }
 
     /**
@@ -104,7 +112,7 @@ class PlantListViewModel internal constructor(
         growZoneFlow.value = NoGrowZone
 
         // initial code version, will move during flow rewrite
-        launchDataLoad { plantRepository.tryUpdateRecentPlantsCache() }
+      //  launchDataLoad { plantRepository.tryUpdateRecentPlantsCache() }
     }
 
     /**
